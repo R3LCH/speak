@@ -24,8 +24,10 @@ pub fn serve(stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<()> 
                 let reply = if cmd.trim() == "stop" {
                     stop.store(true, std::sync::atomic::Ordering::Relaxed);
                     "stopping\n"
-                } else {
+                } else if cmd.trim() == "status" {
                     "running\n"
+                } else {
+                    "error: unknown command\n"
                 };
                 let _ = stream.write_all(reply.as_bytes());
             }

@@ -23,19 +23,24 @@ pub struct TranscriptionResponse {
 }
 pub struct WorkerClient {
     child: Child,
+    reader: BufReader<std::process::ChildStdout>,
 }
 impl WorkerClient {
     pub fn start(config: &Config) -> Result<Self> {
         let mut p = config.worker_command.split_whitespace();
         let exe = p.next().context("empty worker command")?;
-        let child = Command::new(exe)
+        let mut child = Command::new(exe)
             .args(p)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
             .context("start worker")?;
-        Ok(Self { child })
+        let stdout = child.stdout.take().context("worker stdout")?;
+        Ok(Self {
+            child,
+            reader: BufReader::new(stdout),
+        })
     }
     pub fn transcribe(&mut self, req: TranscriptionRequest) -> Result<TranscriptionResponse> {
         if let Some(status) = self.child.try_wait()? {
@@ -48,10 +53,10 @@ impl WorkerClient {
             .context("worker stdin")?
             .write_all(format!("{}\n", line).as_bytes())?;
         self.child.stdin.as_mut().unwrap().flush()?;
-        let stdout = self.child.stdout.as_mut().context("worker stdout")?;
-        let mut reader = BufReader::new(stdout);
         let mut out = String::new();
-        reader.read_line(&mut out).context("read worker response")?;
+        self.reader
+            .read_line(&mut out)
+            .context("read worker response")?;
         if out.trim().is_empty() {
             anyhow::bail!("worker closed stdout without a response")
         }

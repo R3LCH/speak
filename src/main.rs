@@ -28,7 +28,15 @@ fn main() -> Result<()> {
             speak::daemon::Daemon::run(Config::load(Config::default_path()).unwrap_or_default())
         }
         Command::Doctor => speak::control::doctor(&Config::default()),
-        Command::Start => speak::control::client_command("status"),
+        Command::Start => {
+            let status = std::process::Command::new("systemctl")
+                .args(["--user", "start", "speak.service"])
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("systemctl failed to start speak.service")
+            }
+            Ok(())
+        }
         Command::Stop => speak::control::client_command("stop"),
         Command::Status => speak::control::client_command("status"),
     }
