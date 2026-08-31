@@ -1,32 +1,30 @@
-# speak
+<p align="center"><strong>Speak</strong></p>
+<p align="center">Local speech-to-text for Linux, pasted into the focused app.</p>
 
-Local speech-to-text for Linux. Press and release Alt twice to start recording, speak, press Alt twice again, and the complete transcription is pasted into the focused terminal or application.
+Press <code>Alt</code> twice, speak, press <code>Alt</code> twice again, and the final transcription is pasted into your terminal or text field. Speak runs as a user-level systemd service and keeps the Whisper model loaded.
 
-The Rust daemon runs in the background. A persistent Python worker runs [faster-whisper](https://github.com/SYSTRAN/faster-whisper), using NVIDIA CUDA when available and CPU fallback otherwise.
+## Highlights
 
-## Requirements
+- X11 and Wayland sessions
+- Global Alt double-tap hotkey
+- Multilingual Whisper models with automatic language detection
+- CUDA acceleration with CPU fallback
+- RAM-conscious <code>small</code> + CPU <code>int8</code> defaults
+- Configurable model, language, device, microphone, and timing
 
-- Linux with X11 or Wayland
-- Rust/Cargo
-- Python 3.9+ and `python3-venv`
-- Working microphone
+## Install
 
-X11:
-
-```bash
-sudo apt install xclip xdotool
-```
-
-Wayland:
+### System packages
 
 ```bash
-sudo apt install wl-clipboard ydotool
+sudo apt install python3 python3-venv wl-clipboard ydotool
+sudo apt install xclip xdotool  # X11 only
 sudo usermod -aG input "$USER"
 ```
 
-Log out and back in after adding the `input` group. Wayland also needs read access to `/dev/input/event*` and write access to `/dev/uinput`.
+Log out and back in after adding the <code>input</code> group. Wayland requires access to <code>/dev/input/event*</code> and <code>/dev/uinput</code>.
 
-## Installation
+### From source
 
 ```bash
 git clone https://github.com/R3LCH/speak.git
@@ -38,13 +36,7 @@ python -m pip install -r worker/requirements.txt
 ./install.sh
 ```
 
-The installer builds the Rust binary, installs it to `~/.local/bin/speak`, copies the worker to `~/.local/share/speak/`, creates the user config, and enables the user systemd service.
-
-If needed, add the binary directory to `PATH`:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+The installer builds the Rust binary, installs it to <code>~/.local/bin/speak</code>, copies the worker, creates the user config, and enables <code>speak.service</code>.
 
 ## Verify
 
@@ -53,17 +45,15 @@ speak doctor
 systemctl --user status speak.service
 ```
 
-The first transcription downloads the Whisper model. Later runs use the local cache.
+The first transcription downloads the selected model from Hugging Face; later runs use the local cache.
 
 ## Use
 
 1. Focus a terminal prompt or text field.
-2. Press and release `Alt` twice within 300 ms.
+2. Press and release <code>Alt</code> twice within 300 ms.
 3. Speak.
-4. Press and release `Alt` twice again.
-5. Wait for the final text to be pasted.
-
-Watch logs while testing:
+4. Press and release <code>Alt</code> twice again.
+5. Wait for the complete text to be pasted.
 
 ```bash
 journalctl --user -fu speak.service -o cat
@@ -82,22 +72,20 @@ systemctl --user enable --now speak.service
 
 ## Configuration
 
-Edit `~/.config/speak/config.toml`:
+Edit <code>~/.config/speak/config.toml</code>:
 
 ```toml
 model = "small"
-device = "auto"          # auto, cpu, or cuda
-compute_type = "auto"   # auto, int8, int8_float16, or float16
-language = "auto"       # automatic detection, or an ISO code such as "en"
+device = "auto"
+compute_type = "auto"
+language = "auto"
 beam_size = 1
 hotkey = "alt-double-tap"
 double_tap_ms = 300
 audio_device = "default"
 ```
 
-Whisper checkpoints are multilingual by default. `language = "auto"` enables detection; setting an ISO code skips detection and can reduce latency. Larger models improve accuracy but use more RAM/VRAM.
-
-After editing:
+Whisper checkpoints are multilingual by default. Keep <code>language = "auto"</code> for detection, or set an ISO code such as <code>en</code> to skip detection. Restart the service after edits:
 
 ```bash
 systemctl --user restart speak.service
@@ -105,28 +93,31 @@ systemctl --user restart speak.service
 
 ## Performance
 
-The default `small` model with CPU `int8` prioritizes lower RAM usage. With compatible CUDA 12 and cuDNN 9 libraries, `device = "auto"` uses GPU `int8_float16` and falls back to CPU `int8` if GPU initialization fails.
+The default <code>small</code> model with CPU <code>int8</code> prioritizes lower RAM usage. With NVIDIA CUDA 12 and cuDNN 9, <code>device = "auto"</code> uses GPU <code>int8_float16</code> and falls back to CPU <code>int8</code>.
 
 ## Troubleshooting
 
-Inspect recent errors:
-
 ```bash
+systemctl --user status speak.service
 journalctl --user -u speak.service -n 100 --no-pager
 speak doctor
 ```
 
-For Wayland hotkeys, verify the running service inherited the `input` group:
+For Wayland hotkeys, verify the service has the <code>input</code> group:
 
 ```bash
 pid=$(systemctl --user show -p MainPID --value speak.service)
 grep Groups /proc/$pid/status
 ```
 
-For Wayland paste, `wl-copy` and `ydotool` are required. For X11 paste, `xclip` and `xdotool` are required. If `faster-whisper` is missing, reinstall it in the project environment and run `./install.sh` again:
+Wayland paste uses <code>Ctrl+Shift+V</code> and requires <code>wl-copy</code> plus <code>ydotool</code>. X11 paste uses <code>Ctrl+V</code> and requires <code>xclip</code> plus <code>xdotool</code>.
+
+If the worker is missing:
 
 ```bash
 .venv/bin/python -m pip install -r worker/requirements.txt
+.venv/bin/python -c 'import faster_whisper; print("worker ready")'
+./install.sh
 ```
 
 ## Development
