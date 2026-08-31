@@ -23,10 +23,15 @@ fn main() -> Result<()> {
             println!("{}", toml::to_string_pretty(&Config::default())?);
             Ok(())
         }
-        Command::Run => speak::daemon::Daemon::run(Config::default()),
+        Command::Run => {
+            speak::daemon::Daemon::run(Config::load(Config::default_path()).unwrap_or_default())
+        }
         Command::Doctor => speak::control::doctor(&Config::default()),
         Command::Start | Command::Stop | Command::Status => {
-            speak::control::client_command("not implemented")
+            speak::control::client_command(match Cli::parse().command {
+                Command::Stop => "stop",
+                _ => "status",
+            })
         }
     }
 }

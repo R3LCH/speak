@@ -5,10 +5,21 @@ use crate::paste::PasteBackend;
 use crate::paste::{normalize_transcription, CommandPaste};
 use crate::worker::{TranscriptionRequest, WorkerClient};
 use anyhow::{Context, Result};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 pub struct Daemon;
 impl Daemon {
     pub fn run(config: Config) -> Result<()> {
         config.validate()?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let s = Arc::clone(&stop);
+        ctrlc::set_handler(move || s.store(true, Ordering::Relaxed))?;
+        let ss = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let _ = crate::control::serve(ss);
+        });
         ctrlc::set_handler(|| std::process::exit(0)).context("install signal handler")?;
         let mut worker = WorkerClient::start(&config)?;
         let mut hotkey = GlobalHotkey::start(config.double_tap_ms);
@@ -16,6 +27,9 @@ impl Daemon {
         tracing::info!(model=%config.model,"speak daemon ready");
         let mut recording = None;
         loop {
+            if stop.load(Ordering::Relaxed) {
+                break Ok(());
+            }
             hotkey.next_activation()?;
             if recording.is_none() {
                 recording = Some(AudioCapture::start(&config.audio_device)?);
