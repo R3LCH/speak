@@ -61,5 +61,40 @@ pub fn doctor(_: &Config) -> Result<()> {
     if s == "none" {
         anyhow::bail!("no display session")
     }
+    for cmd in if s == "wayland" {
+        vec!["wl-copy", "ydotool"]
+    } else {
+        vec!["xclip", "xdotool"]
+    } {
+        let ok = std::process::Command::new("sh")
+            .args(["-c", &format!("command -v {cmd}")])
+            .status()
+            .map(|v| v.success())
+            .unwrap_or(false);
+        println!("{cmd}: {}", if ok { "ok" } else { "missing" });
+    }
+    if s == "wayland" {
+        println!(
+            "/dev/uinput: {}",
+            if std::path::Path::new("/dev/uinput").exists() {
+                "present"
+            } else {
+                "missing"
+            }
+        );
+    }
+    let py = std::process::Command::new("python3")
+        .args(["-c", "import faster_whisper"])
+        .status()
+        .map(|v| v.success())
+        .unwrap_or(false);
+    println!(
+        "faster-whisper: {}",
+        if py {
+            "ok"
+        } else {
+            "missing (install worker/requirements.txt)"
+        }
+    );
     Ok(())
 }
