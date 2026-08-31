@@ -65,7 +65,19 @@ fn default_audio() -> String {
     "default".into()
 }
 fn default_worker() -> String {
-    "python3 worker/speak_worker.py".into()
+    let python = std::env::current_dir()
+        .ok()
+        .map(|d| d.join(".venv/bin/python"))
+        .filter(|p| p.exists())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "python3".into());
+    let script = std::env::current_dir()
+        .ok()
+        .map(|d| d.join("worker/speak_worker.py"))
+        .filter(|p| p.exists())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "worker/speak_worker.py".into());
+    format!("{python} {script}")
 }
 impl Default for Config {
     fn default() -> Self {
