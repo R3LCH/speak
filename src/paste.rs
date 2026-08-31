@@ -28,7 +28,9 @@ impl PasteBackend for CommandPaste {
             let mut c = Command::new("wl-copy").stdin(Stdio::piped()).spawn()?;
             c.stdin.as_mut().unwrap().write_all(text.as_bytes())?;
             c.wait()?;
-            let status = Command::new("ydotool").args(["key", "CTRL+v"]).status()?;
+            let status = Command::new("ydotool")
+                .args(["key", "CTRL+SHIFT+v"])
+                .status()?;
             if !status.success() {
                 anyhow::bail!("ydotool paste failed with {status}")
             }
