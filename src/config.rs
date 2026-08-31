@@ -65,7 +65,7 @@ fn default_audio() -> String {
     "default".into()
 }
 fn default_worker() -> String {
-    "python3 -m speak_worker".into()
+    "python3 worker/speak_worker.py".into()
 }
 impl Default for Config {
     fn default() -> Self {

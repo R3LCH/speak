@@ -6,3 +6,4 @@ beam_size = 1
 hotkey = "alt-double-tap"
 double_tap_ms = 300
 audio_device = "default"
+worker_command = "python3 worker/speak_worker.py"
