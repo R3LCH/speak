@@ -1,0 +1,8 @@
+model = "small"
+device = "auto"
+compute_type = "auto"
+language = "auto"
+beam_size = 1
+hotkey = "alt-double-tap"
+double_tap_ms = 300
+audio_device = "default"
