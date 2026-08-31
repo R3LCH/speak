@@ -38,6 +38,9 @@ impl WorkerClient {
         Ok(Self { child })
     }
     pub fn transcribe(&mut self, req: TranscriptionRequest) -> Result<TranscriptionResponse> {
+        if let Some(status) = self.child.try_wait()? {
+            anyhow::bail!("worker exited before request (status {status})")
+        }
         let line = serde_json::to_string(&req)?;
         self.child
             .stdin
@@ -48,8 +51,16 @@ impl WorkerClient {
         let stdout = self.child.stdout.as_mut().context("worker stdout")?;
         let mut reader = BufReader::new(stdout);
         let mut out = String::new();
-        reader.read_line(&mut out)?;
-        serde_json::from_str(out.trim()).context("parse worker response")
+        reader.read_line(&mut out).context("read worker response")?;
+        if out.trim().is_empty() {
+            anyhow::bail!("worker closed stdout without a response")
+        }
+        let response: TranscriptionResponse =
+            serde_json::from_str(out.trim()).context("parse worker response")?;
+        if response.id != req.id && !response.id.is_empty() {
+            anyhow::bail!("worker response id mismatch")
+        }
+        Ok(response)
     }
     pub fn restart(&mut self) -> Result<()> {
         self.child.kill().ok();

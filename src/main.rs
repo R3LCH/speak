@@ -18,7 +18,8 @@ enum Command {
 }
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    match Cli::parse().command {
+    let command = Cli::parse().command;
+    match command {
         Command::Config => {
             println!("{}", toml::to_string_pretty(&Config::default())?);
             Ok(())
@@ -27,11 +28,8 @@ fn main() -> Result<()> {
             speak::daemon::Daemon::run(Config::load(Config::default_path()).unwrap_or_default())
         }
         Command::Doctor => speak::control::doctor(&Config::default()),
-        Command::Start | Command::Stop | Command::Status => {
-            speak::control::client_command(match Cli::parse().command {
-                Command::Stop => "stop",
-                _ => "status",
-            })
-        }
+        Command::Start => speak::control::client_command("status"),
+        Command::Stop => speak::control::client_command("stop"),
+        Command::Status => speak::control::client_command("status"),
     }
 }

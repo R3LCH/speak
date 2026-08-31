@@ -13,6 +13,7 @@ pub fn serve(stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<()> 
     let path = socket_path();
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)?;
+    std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
         match listener.accept() {
