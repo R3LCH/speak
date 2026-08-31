@@ -43,6 +43,7 @@ impl Daemon {
                     language: (config.language != "auto").then(|| config.language.clone()),
                     beam_size: config.beam_size,
                 })?;
+                tracing::info!(ok=response.ok, device=%response.device_used, text=?response.text, "transcription response");
                 if response.ok {
                     if let Some(text) = response.text.and_then(|t| normalize_transcription(&t)) {
                         paste.paste(&text)?;

@@ -28,9 +28,12 @@ impl PasteBackend for CommandPaste {
             let mut c = Command::new("wl-copy").stdin(Stdio::piped()).spawn()?;
             c.stdin.as_mut().unwrap().write_all(text.as_bytes())?;
             c.wait()?;
-            Command::new("ydotool")
+            let status = Command::new("ydotool")
                 .args(["key", "29:1", "47:1", "47:0", "29:0"])
                 .status()?;
+            if !status.success() {
+                anyhow::bail!("ydotool paste failed with {status}")
+            }
         } else {
             let mut c = Command::new("xclip")
                 .args(["-selection", "clipboard"])
