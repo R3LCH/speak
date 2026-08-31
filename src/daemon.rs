@@ -4,11 +4,12 @@ use crate::hotkey::{GlobalHotkey, HotkeyBackend};
 use crate::paste::PasteBackend;
 use crate::paste::{normalize_transcription, CommandPaste};
 use crate::worker::{TranscriptionRequest, WorkerClient};
-use anyhow::Result;
+use anyhow::{Context, Result};
 pub struct Daemon;
 impl Daemon {
     pub fn run(config: Config) -> Result<()> {
         config.validate()?;
+        ctrlc::set_handler(|| std::process::exit(0)).context("install signal handler")?;
         let mut worker = WorkerClient::start(&config)?;
         let mut hotkey = GlobalHotkey::start(config.double_tap_ms);
         let mut paste = CommandPaste::detect();
