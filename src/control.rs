@@ -61,6 +61,22 @@ pub fn doctor(_: &Config) -> Result<()> {
     if s == "none" {
         anyhow::bail!("no display session")
     }
+    let input_access = std::fs::read_dir("/dev/input")
+        .ok()
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| std::fs::File::open(e.path()).is_ok())
+        })
+        .unwrap_or(false);
+    println!(
+        "/dev/input readable: {}",
+        if input_access {
+            "yes"
+        } else {
+            "no (add user to input group or udev rule)"
+        }
+    );
     for cmd in if s == "wayland" {
         vec!["wl-copy", "ydotool"]
     } else {

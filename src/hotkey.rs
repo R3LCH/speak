@@ -47,7 +47,7 @@ impl GlobalHotkey {
     pub fn start(window: u64) -> Self {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = rdev::listen(move |e| {
+            if let Err(err) = rdev::listen(move |e| {
                 use rdev::{EventType, Key};
                 let (alt, pressed) = match e.event_type {
                     EventType::KeyPress(Key::Alt | Key::AltGr) => (true, true),
@@ -65,7 +65,9 @@ impl GlobalHotkey {
                             .as_millis() as u64,
                     });
                 }
-            });
+            }) {
+                tracing::error!(error=?err, "global key listener stopped; grant input-device access or run an X11-compatible session");
+            }
         });
         Self {
             rx,
