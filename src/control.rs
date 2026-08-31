@@ -83,7 +83,16 @@ pub fn doctor(_: &Config) -> Result<()> {
             }
         );
     }
-    let py = std::process::Command::new("python3")
+    let python = Config::load(Config::default_path())
+        .ok()
+        .and_then(|c| {
+            c.worker_command
+                .split_whitespace()
+                .next()
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "python3".into());
+    let py = std::process::Command::new(&python)
         .args(["-c", "import faster_whisper"])
         .status()
         .map(|v| v.success())

@@ -4,7 +4,7 @@ use crate::hotkey::{GlobalHotkey, HotkeyBackend};
 use crate::paste::PasteBackend;
 use crate::paste::{normalize_transcription, CommandPaste};
 use crate::worker::{TranscriptionRequest, WorkerClient};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -14,13 +14,10 @@ impl Daemon {
     pub fn run(config: Config) -> Result<()> {
         config.validate()?;
         let stop = Arc::new(AtomicBool::new(false));
-        let s = Arc::clone(&stop);
-        ctrlc::set_handler(move || s.store(true, Ordering::Relaxed))?;
         let ss = Arc::clone(&stop);
         std::thread::spawn(move || {
             let _ = crate::control::serve(ss);
         });
-        ctrlc::set_handler(|| std::process::exit(0)).context("install signal handler")?;
         let mut worker = WorkerClient::start(&config)?;
         let mut hotkey = GlobalHotkey::start(config.double_tap_ms);
         let mut paste = CommandPaste::detect();
