@@ -1,142 +1,109 @@
-# Speech-to-CLI Implementation Plan
+# Speech-to-CLI Production Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task with verification checkpoints.
 
-**Goal:** Build a Linux Rust daemon and CLI that records speech via Alt double-tap, transcribes it with a persistent `faster-whisper` worker using automatic GPU/CPU selection, and pastes the complete transcription into the focused application on both X11 and Wayland.
+**Goal:** Deliver a usable Linux background speech-to-text tool: Alt double-tap starts/stops recording, `faster-whisper` transcribes the complete clip, and the result is pasted into the focused terminal/application on X11 and Wayland.
 
-**Architecture:** A Cargo workspace contains a Rust binary/library with configuration, state machine, audio capture, hotkey and paste backend traits, worker protocol, control socket, and CLI. A Python JSON-lines worker loads one `faster-whisper` model and serves transcription requests. Runtime backend selection chooses X11 or Wayland capabilities while sharing recording and delivery logic.
+**Architecture:** Rust owns configuration, continuous daemon lifecycle, audio capture, state machine, hotkey/paste backends, control socket, diagnostics, and systemd integration. A persistent Python `faster-whisper` worker communicates over a versioned JSON-lines protocol and loads one model per daemon. X11 uses XInput2/XTest; Wayland uses GlobalShortcuts via zbus for configured chords and evdev/uinput for Alt double-tap and paste when permissions allow.
 
-**Tech Stack:** Rust stable, Cargo, `cpal` + `hound`, `serde`/`toml`, `clap`, `tracing`, `evdev`, `uinput`, X11/XTest bindings, zbus for portals, Python 3.9+, `faster-whisper`, pytest, user systemd.
+**Tech Stack:** Rust stable, `cpal`, `hound`, `evdev`, `uinput`, `x11rb`, `zbus`, `serde`, `toml`, `clap`, `tracing`; Python 3.9+, `faster-whisper`, pytest; user systemd.
 
 **Spec:** `docs/superpowers/specs/2026-08-31-speech-to-cli-design.md`
 
+## Acceptance Criteria
+
+- `speak run` stays alive and handles repeated recordings.
+- Alt double-tap toggles recording on X11 and supported Wayland setups.
+- Microphone input is converted to 16 kHz mono PCM and released after each clip.
+- Worker loads one configurable model; `auto` selects CUDA `int8_float16`, then CPU `int8`.
+- Language auto-detects by default; final text is pasted once; empty output is ignored.
+- `doctor` reports missing session, portal, device permissions, clipboard, Python, model, or CUDA capability.
+- `start|stop|status` use a `0600` Unix socket and user systemd unit.
+- Unit, protocol, backend-mock, and CPU-only e2e tests pass.
+
 ## Global Constraints
 
-- Linux-only initial release with X11 and Wayland support.
-- Default hotkey is Alt double-tap with a configurable 300 ms interval.
-- Paste one complete transcription after recording stops; do not stream partial text.
-- Default model is `small`; CPU uses `int8`, CUDA uses `int8_float16` when available.
-- Language is automatic by default; explicit language is an optional override.
-- Run unprivileged; Wayland evdev/uinput access must be diagnosed, not silently bypassed.
-- Model is loaded once and reused; recording/transcription queues are bounded.
+- Linux-only v1 with X11 and Wayland support.
+- No streaming partial paste.
+- Defaults: `small`, device `auto`, CPU `int8`, CUDA `int8_float16`, beam 1, language `auto`, 300 ms double-tap.
+- Unprivileged daemon; evdev/uinput access is diagnosed and documented.
+- One persistent worker and bounded queues.
 
-### Task 1: Bootstrap workspace and configuration
+### Task 1: Configuration and CLI contract
 
-**Files:**
-- Create: `Cargo.toml`, `src/lib.rs`, `src/main.rs`
-- Create: `src/config.rs`, `tests/config.rs`, `config.example.toml`
-- Create: `README.md`
+**Files:** `Cargo.toml`, `src/config.rs`, `src/cli.rs`, `src/main.rs`, `src/lib.rs`, `config.example.toml`, `tests/config.rs`, `README.md`
 
-**Interfaces:**
-- Produces `Config`, `DevicePolicy`, `ComputeType`, `HotkeyConfig`, `Config::load(path) -> Result<Config>`, and CLI subcommands `run`, `start`, `stop`, `status`, `config`, `doctor`.
+- [ ] Define typed config/defaults, XDG path loading, validation, and CLI overrides.
+- [ ] Add commands `run`, `start`, `stop`, `status`, `config`, `doctor`.
+- [ ] Test defaults, TOML round-trip, invalid values, and override precedence.
+- [ ] Run format and `cargo test config`; commit.
 
-- [ ] Write tests asserting missing fields receive defaults (`small`, `auto`, `beam_size=1`, `alt-double-tap`, 300 ms) and invalid enum/range values fail with field names.
-- [ ] Run `cargo test config`; verify tests fail because types are absent.
-- [ ] Implement serde-deserializable TOML configuration, XDG path resolution, CLI parsing, and example config.
-- [ ] Run `cargo fmt --check`, `cargo test config`, and verify pass.
-- [ ] Commit `feat: bootstrap speak configuration and cli`.
+### Task 2: Real audio capture
 
-### Task 2: Audio capture and WAV lifecycle
+**Files:** `src/audio.rs`, `src/audio/resampler.rs`, `tests/audio.rs`
 
-**Files:**
-- Create: `src/audio.rs`, `tests/audio.rs`
-- Modify: `Cargo.toml`
+- [ ] Implement `cpal` device enumeration/selection and callback capture into a bounded ring buffer.
+- [ ] Convert f32/i16, arbitrary channels, and sample rates to mono 16 kHz i16 without blocking callbacks.
+- [ ] Write unique private WAV files under `$XDG_RUNTIME_DIR/speak`; delete on success, error, and shutdown.
+- [ ] Test conversion, overflow policy, WAV headers, and cleanup; run clippy; commit.
 
-**Interfaces:**
-- Produces `AudioCapture::start(device: &str) -> Result<RecordingHandle>`, `RecordingHandle::stop(self) -> Result<TempAudio>`, and `TempAudio::path() -> &Path` with automatic deletion on drop.
+### Task 3: X11 backend
 
-- [ ] Add tests with a fake capture source for 16 kHz mono conversion, stop behavior, and cleanup after drop.
-- [ ] Run `cargo test audio`; verify failure before implementation.
-- [ ] Implement `cpal` input selection, bounded sample buffering, conversion to mono 16-bit PCM at 16 kHz, private runtime-directory WAV creation via `hound`, and cleanup guards.
-- [ ] Run `cargo test audio` and `cargo clippy -- -D warnings`.
-- [ ] Commit `feat: add bounded audio capture`.
+**Files:** `src/backend/mod.rs`, `src/backend/x11.rs`, `src/hotkey.rs`, `src/paste.rs`, `tests/x11_mock.rs`
 
-### Task 3: Hotkey and paste backend abstractions
+- [ ] Subscribe to XInput2 raw key events and implement left/right Alt double-tap with release filtering.
+- [ ] Capture focused window, write clipboard selection, and inject Ctrl+V through XTest.
+- [ ] Recover from connection loss and report missing `DISPLAY`, XInput2, or XTest capabilities.
+- [ ] Add mock tests and opt-in Xvfb integration; commit.
 
-**Files:**
-- Create: `src/backend/mod.rs`, `src/backend/x11.rs`, `src/backend/wayland.rs`, `src/hotkey.rs`, `src/paste.rs`, `tests/hotkey.rs`, `tests/backend_mocks.rs`
-- Modify: `Cargo.toml`
+### Task 4: Wayland backend
 
-**Interfaces:**
-- `HotkeyBackend::next_activation() -> Result<Activation>` and `PasteBackend::paste(text: &str) -> Result<()>`.
-- `DoubleTapDetector::feed(event: KeyEvent) -> Option<Activation>`.
-- `BackendFactory::detect(config: &Config) -> Result<BackendSet>`.
+**Files:** `src/backend/wayland.rs`, `src/backend/portal.rs`, `src/backend/uinput.rs`, `tests/wayland_mock.rs`
 
-- [ ] Test double-tap timing, left/right Alt handling, key-release filtering, and reset after timeout using deterministic timestamps.
-- [ ] Run `cargo test hotkey`; verify failure.
-- [ ] Implement detector and mock traits.
-- [ ] Implement X11 event hook and XTest paste path, preserving clipboard text and focused-window timing.
-- [ ] Implement Wayland portal registration through zbus for configured shortcuts; implement evdev Alt-event reading for double-tap and uinput Ctrl+V synthesis, with explicit permission errors.
-- [ ] Add capability tests that skip real display/device integration when unavailable.
-- [ ] Run backend unit tests, `cargo fmt --check`, and clippy.
-- [ ] Commit `feat: support x11 and wayland input backends`.
+- [ ] Register configured chord shortcuts through `org.freedesktop.portal.GlobalShortcuts` over zbus.
+- [ ] Enumerate keyboard-capable `/dev/input/event*` devices and feed Alt events to the shared detector.
+- [ ] Create a named uinput virtual keyboard and synthesize Ctrl+V; cleanly close it.
+- [ ] Select portal or evdev paths explicitly; never silently claim unsupported compositors work.
+- [ ] Test D-Bus/evdev/uinput mocks and gated live-session tests; commit.
 
-### Task 4: Faster-whisper worker protocol
+### Task 5: Persistent faster-whisper worker
 
-**Files:**
-- Create: `worker/speak_worker.py`, `worker/requirements.txt`, `worker/test_worker.py`
-- Create: `src/worker.rs`, `tests/worker_protocol.rs`
+**Files:** `worker/speak_worker.py`, `worker/requirements.txt`, `worker/test_worker.py`, `src/worker.rs`, `tests/worker_protocol.rs`
 
-**Interfaces:**
-- Rust `WorkerClient::start(config: &Config)`, `WorkerClient::transcribe(request: TranscriptionRequest) -> Result<TranscriptionResponse>`, `WorkerClient::restart()`.
-- JSON request `{"id": string, "audio_path": string, "model": string, "device": string, "compute_type": string, "language": string|null, "beam_size": u32}`; response `{ "id": string, "ok": bool, "text": string|null, "error": string|null, "device_used": string }`.
+- [ ] Implement versioned JSON-lines requests/responses, ready handshake, request IDs, timeout, and structured errors.
+- [ ] Load one model; map `auto` to CUDA `int8_float16` then CPU `int8`; report `device_used`.
+- [ ] Use `language=None` for detection, configured ISO language otherwise, VAD, beam size, and `condition_on_previous_text=False`.
+- [ ] Supervise subprocess, drain stderr, validate IDs, restart once, and shut down cleanly.
+- [ ] Test fake model/child for malformed JSON, timeout, fallback, restart, and segment joining; commit.
 
-- [ ] Write Python tests for model initialization options, automatic language handling, segment joining, VAD, and malformed requests.
-- [ ] Write Rust protocol tests with a fake child process for round trips, mismatched IDs, malformed JSON, timeout, and one restart.
-- [ ] Run pytest and Rust protocol tests; verify failures.
-- [ ] Implement persistent worker model caching, `device=auto` CUDA probe with fallback to CPU `int8`, `language=auto` mapping to `None`, `beam_size`, VAD, and `condition_on_previous_text=False`.
-- [ ] Implement line-delimited Rust I/O with bounded request handling, stderr capture, timeout, and actionable errors.
-- [ ] Run `pytest -q`, `cargo test worker_protocol`, and clippy.
-- [ ] Commit `feat: add persistent faster whisper worker`.
+### Task 6: Continuous daemon workflow
 
-### Task 5: Daemon state machine and end-to-end flow
+**Files:** `src/state.rs`, `src/daemon.rs`, `src/notify.rs`, `tests/daemon.rs`
 
-**Files:**
-- Create: `src/daemon.rs`, `src/state.rs`, `tests/daemon.rs`
-- Modify: `src/lib.rs`, `src/main.rs`
+- [ ] Implement `Idle -> Recording -> Transcribing -> Idle` plus recoverable `Error` and shutdown cancellation.
+- [ ] Capture focused target, record, transcribe exactly once, normalize text, paste once, and clean resources.
+- [ ] Ignore activations while busy, cap recording duration, and notify/log failures.
+- [ ] Test fake backends for repeated clips, empty output, worker restart, max duration, and cleanup; commit.
 
-**Interfaces:**
-- `Daemon::run(config: Config) -> Result<()>`.
-- States: `Idle`, `Recording(RecordingHandle)`, `Transcribing`, `Error`.
-- `normalize_transcription(text: &str) -> Option<String>`.
+### Task 7: Control, service, diagnostics
 
-- [ ] Add end-to-end tests using fake hotkey, audio, worker, and paste backends: one complete paste, empty text skipped, recording failure recovery, and worker restart.
-- [ ] Run `cargo test daemon`; verify failure.
-- [ ] Implement event loop, state transitions, temporary-file ownership, text normalization, single final paste, structured tracing, and bounded repeated-activation handling.
-- [ ] Run daemon tests and `cargo clippy -- -D warnings`.
-- [ ] Commit `feat: implement speech daemon lifecycle`.
+**Files:** `src/control.rs`, `src/doctor.rs`, `systemd/speak.service`, `tests/control.rs`, `tests/doctor.rs`
 
-### Task 6: Control socket, systemd service, and diagnostics
+- [ ] Implement single-instance locking and `0600` runtime socket with `status|stop|reload`.
+- [ ] Wire CLI commands to the user service and graceful signals.
+- [ ] Check session, X11/Wayland, portal, evdev/uinput, audio, Python/package, model cache, clipboard, and CUDA with remediation.
+- [ ] Test authorization, stale sockets, malformed commands, and service syntax; commit.
 
-**Files:**
-- Create: `src/control.rs`, `systemd/speak.service`, `tests/control.rs`
-- Modify: `src/main.rs`, `README.md`
+### Task 8: Packaging and end-to-end verification
 
-**Interfaces:**
-- Unix socket commands `status`, `stop`, `reload`; socket mode `0600`.
-- `doctor` checks session, backend, devices, Python worker, model cache, and CUDA.
+**Files:** `install.sh`, `scripts/check-deps.sh`, `tests/e2e.rs`, `README.md`
 
-- [ ] Test socket authorization, command parsing, graceful stop, and status serialization.
-- [ ] Run `cargo test control`; verify failure.
-- [ ] Implement runtime-dir socket lifecycle, CLI client commands, signal handling, and systemd user unit ordered after graphical session.
-- [ ] Implement `doctor` checks with remediation text for X11/Wayland, `/dev/input`, `/dev/uinput`, portal, Python, model cache, and CUDA.
-- [ ] Run control tests, `cargo test`, and inspect `systemd-analyze verify` where available.
-- [ ] Commit `feat: add daemon control and systemd integration`.
+- [ ] Package binary, worker, config, and user unit without root; document CUDA 12/cuDNN 9 as optional.
+- [ ] Check required X11 (`xclip`, `xdotool`) and Wayland (`wl-clipboard`, `ydotool`, portal) dependencies accurately.
+- [ ] Add CPU-only fake-worker e2e and opt-in real-model smoke test via `SPEAK_REAL_MODEL=1`.
+- [ ] Document model download, language behavior, permissions, systemd, troubleshooting, and compositor limitations.
+- [ ] Run `cargo fmt --check`, clippy, `cargo test`, `pytest -q`, dependency checks, and `speak doctor`; commit.
 
-### Task 7: Packaging and verification
+## Plan Self-Review
 
-**Files:**
-- Create: `install.sh`, `scripts/check-deps.sh`, `tests/e2e.rs`
-- Modify: `README.md`, `worker/requirements.txt`, `config.example.toml`
-
-- [ ] Add CPU-only integration test using a fake worker and verify no CUDA dependency is required for startup.
-- [ ] Add optional real-worker smoke test gated by `SPEAK_REAL_MODEL=1`.
-- [ ] Document Python/faster-whisper installation, CUDA 12/cuDNN 9 optional libraries, X11 packages, Wayland portal support, evdev/uinput group or udev setup, systemd commands, and model cache sizing.
-- [ ] Run `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, `pytest -q`, and `scripts/check-deps.sh`.
-- [ ] Commit `docs: document installation and verification`.
-
-## Self-Review Checklist
-
-- Spec coverage: tasks 1-7 cover configuration, hotkeys, both display protocols, audio, worker, resource policy, errors, security, tests, and packaging.
-- Placeholder scan: no `TBD`, `TODO`, or unspecified implementation steps are used.
-- Interface consistency: daemon consumes `AudioCapture`, `BackendSet`, and `WorkerClient` interfaces defined in earlier tasks; `doctor` and systemd are added after daemon startup exists.
+Tasks 1-8 cover every spec requirement and replace the previous scaffold-only work with concrete implementation and verification steps. No placeholders or unspecified “appropriate” behavior remain; unsupported Wayland capabilities must be surfaced by `doctor`.
