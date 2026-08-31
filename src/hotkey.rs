@@ -96,6 +96,11 @@ fn listen_evdev(tx: mpsc::Sender<KeyEvent>) -> anyhow::Result<()> {
                 .name()
                 .map(|n| n.to_ascii_lowercase().contains("keyboard"))
                 .unwrap_or(false);
+            eprintln!(
+                "speak: evdev device {} keyboard={}",
+                path.display(),
+                keyboard_name
+            );
             if keyboard_name
                 || d.supported_keys()
                     .map(|k| k.contains(Key::KEY_LEFTALT) || k.contains(Key::KEY_RIGHTALT))
@@ -108,6 +113,7 @@ fn listen_evdev(tx: mpsc::Sender<KeyEvent>) -> anyhow::Result<()> {
     if devices.is_empty() {
         anyhow::bail!("no keyboard input device with Alt key found")
     }
+    eprintln!("speak: monitoring {} keyboard device(s)", devices.len());
     loop {
         for d in devices.iter_mut() {
             for ev in d.fetch_events()? {
@@ -121,6 +127,7 @@ fn listen_evdev(tx: mpsc::Sender<KeyEvent>) -> anyhow::Result<()> {
                             .unwrap_or_default()
                             .as_millis() as u64,
                     });
+                    eprintln!("speak: alt event value={}", ev.value());
                 }
             }
         }

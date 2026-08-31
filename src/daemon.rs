@@ -28,6 +28,7 @@ impl Daemon {
                 break Ok(());
             }
             hotkey.next_activation()?;
+            eprintln!("speak: hotkey activation");
             if recording.is_none() {
                 recording = Some(AudioCapture::start(&config.audio_device)?);
                 tracing::info!("recording started");
@@ -43,6 +44,10 @@ impl Daemon {
                     language: (config.language != "auto").then(|| config.language.clone()),
                     beam_size: config.beam_size,
                 })?;
+                eprintln!(
+                    "speak: transcription ok={} device={} text={:?}",
+                    response.ok, response.device_used, response.text
+                );
                 tracing::info!(ok=response.ok, device=%response.device_used, text=?response.text, "transcription response");
                 if response.ok {
                     if let Some(text) = response.text.and_then(|t| normalize_transcription(&t)) {
